@@ -330,13 +330,33 @@ Fixture.prototype.isIndependent = function() {
 Fixture.prototype.requiredDependenciesAreResolved = function() {
     var isResolved = true;
     var dependencies = this.dependencies;
+    var i;
 
     if(this.hasRequiredDependencies()) {
         this.setRequiredDependencies();
 
-        for(var i = 0; i < dependencies.length && isResolved; i++) {
-            if(dependencies[i].required === true && !this.data[dependencies[i].property]) {
-                isResolved = false;
+        for(i = 0; i < dependencies.length && isResolved; i++) {
+            if(dependencies[i].required && (dependencies[i].type === "model")) {
+                if(!this.data[dependencies[i].property]) {
+                    isResolved = false;
+                }
+            }
+        }
+
+        if(!isResolved) {
+            return false;
+        }
+
+        if(this.hasRequiredCollectionDependency()) {
+            var collectionDependencies = this.uniqueRequiredCollectionDependencies();
+
+            for(i = 0; i < collectionDependencies.length; i++) {
+                this.data[collectionDependencies] = this.data[collectionDependencies] || [];
+
+                if(this.data[collectionDependencies[i]].length < this.requiredCollectionDependencyAssociationCount(collectionDependencies[i])) {
+                    isResolved = false;
+                    break;
+                }
             }
         }
     }
@@ -345,15 +365,115 @@ Fixture.prototype.requiredDependenciesAreResolved = function() {
 };
 
 /*
+ * Check if the fixture has a collection dependency that is required
+ */
+Fixture.prototype.hasRequiredCollectionDependency = function() {
+    var hasRequiredCollectionDependency = false;
+    var i;
+
+    for(i = 0; i < this.dependencies.length; i++) {
+        if((this.dependencies[i].type === "collection") && this.dependencies[i].required) {
+            hasRequiredCollectionDependency = true;
+            break;
+        }
+    }
+
+    return hasRequiredCollectionDependency;
+};
+
+/*
+ * Return all unique required collection dependencies
+ */
+Fixture.prototype.uniqueRequiredCollectionDependencies = function() {
+    var requiredCollectionDependencies = [];
+    var i;
+    var j;
+    var property;
+    var alreadyCounted;
+
+    for(i = 0; i < this.dependencies.length; i++) {
+        if((this.dependencies[i].type === "collection") && this.dependencies[i].required) {
+            property = this.dependencies[i].property;
+
+            if(!requiredCollectionDependencies.length) {
+                requiredCollectionDependencies.push(property);
+            }
+            else {
+                alreadyCounted = false;
+                for(j = 0; j < requiredCollectionDependencies.length; j++) {
+                    if(requiredCollectionDependencies[j] === property) {
+                        alreadyCounted = true;
+                        break;
+                    }
+                }
+
+                if(!alreadyCounted) {
+                    requiredCollectionDependencies.push(property)
+                }
+            }
+        }
+    }
+
+    return requiredCollectionDependencies;
+};
+
+/*
+ * Return the total number of associations within the specified required collection dependency
+ */
+Fixture.prototype.requiredCollectionDependencyAssociationCount = function(property) {
+    if(!property) {
+        throw new Error("Unable to check the association count for an undefined dependency name.");
+    }
+
+    var associationCount = 0;
+    var i;
+
+    for(i = 0; i < this.dependencies.length; i++) {
+        if((this.dependencies[i].property === property) && this.dependencies[i].required) {
+            associationCount++;
+        }
+    }
+
+    return associationCount;
+};
+
+/*
  * Use the completed fixtures to fulfill the required dependencies
  */
 Fixture.prototype.setRequiredDependencies = function() {
     var that = this;
+    var alreadySet;
+    var i;
 
     _.each(this.dependencies, function(dependency) {
         if(dependency.required === true) {
             completedFixtures[dependency.modelName] = completedFixtures[dependency.modelName] || [];
-            that.data[dependency.property] = completedFixtures[dependency.modelName][dependency.associationId];
+            switch(dependency.type) {
+                case "model":
+                    that.data[dependency.property] = completedFixtures[dependency.modelName][dependency.associationId];
+                    break;
+                case "collection":
+                    that.data[dependency.property] = that.data[dependency.property] || [];
+                    var completedFixture = completedFixtures[dependency.modelName][dependency.associationId];
+                    if(completedFixture) {
+                        alreadySet = false;
+
+                        for(i = 0; i < that.data[dependency.property].length; i++) {
+                            if(that.data[dependency.property][i].id === completedFixture.id) {
+                                alreadySet = true;
+                                break;
+                            }
+                        }
+
+                        if(!alreadySet) {
+                            that.data[dependency.property].push(completedFixture);
+                        }
+                    }
+                    break;
+                default:
+                    throw new Error("Dependency requires type of model or collection to determine associative action.");
+                    break;
+            }
         }
     });
 };
